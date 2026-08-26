@@ -88,6 +88,11 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+// Serve static UI files from frontend directory
+	fs := http.FileServer(http.Dir("../frontend"))
+	http.Handle("/", fs)
+
+	// API Routes
 	http.HandleFunc("/api/status", statusHandler)
 	http.HandleFunc("/api/firewall", firewallHandler)
 

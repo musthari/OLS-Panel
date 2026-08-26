@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OLS Panel - Admin Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #38bdf8;
+            --success-color: #22c55e;
+            --danger-color: #ef4444;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+
+        h1 { margin: 0; font-size: 1.5rem; color: var(--accent-color); }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .status-item {
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid var(--accent-color);
+        }
+
+        .status-item h3 { margin: 0 0 5px 0; font-size: 0.85rem; color: #94a3b8; }
+        .status-item p { margin: 0; font-size: 1.2rem; font-weight: bold; }
+
+        .badge-running { color: var(--success-color); }
+        .badge-stopped { color: var(--danger-color); }
+
+        .form-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        input, select, button {
+            padding: 10px 14px;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        button {
+            background-color: var(--accent-color);
+            color: #0f172a;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        button:hover { opacity: 0.9; }
+        #toast { margin-top: 10px; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>OLS Panel Admin</h1>
+        <span id="os-badge" style="color: #94a3b8; font-size: 0.9rem;">OS: Loading...</span>
+    </header>
+
+    <!-- System Status Section -->
+    <div class="card">
+        <h2>System Overview</h2>
+        <div class="status-grid">
+            <div class="status-item">
+                <h3>CPU CORES</h3>
+                <p id="cpu-cores">-</p>
+            </div>
+            <div class="status-item">
+                <h3>OPENLITESPEED</h3>
+                <p id="ols-status">Checking...</p>
+            </div>
+            <div class="status-item">
+                <h3>FIREWALL (UFW)</h3>
+                <p id="ufw-status">Checking...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firewall Manager Section -->
+    <div class="card">
+        <h2>Firewall Manager</h2>
+        <p style="color: #94a3b8; font-size: 0.9rem;">Open or close network ports dynamically.</p>
+        
+        <div class="form-group">
+            <input type="number" id="port-input" placeholder="e.g. 2222" style="width: 150px;">
+            <select id="action-select">
+                <option value="allow">ALLOW</option>
+                <option value="deny">DENY</option>
+            </select>
+            <button onclick="updateFirewall()">Apply Rule</button>
+        </div>
+        <div id="toast"></div>
+    </div>
+</div>
+
+<script>
+    const API_URL = 'http://' + window.location.hostname + ':8080/api';
+
+    async function fetchStatus() {
+        try {
+            const res = await fetch(`${API_URL}/status`);
+            const data = await res.json();
+
+            document.getElementById('os-badge').innerText = `OS: ${data.os.toUpperCase()}`;
+            document.getElementById('cpu-cores').innerText = `${data.core_count} Core(s)`;
+            
+            const olsElem = document.getElementById('ols-status');
+            olsElem.innerText = data.ols_status.toUpperCase();
+            olsElem.className = data.ols_status === 'running' ? 'badge-running' : 'badge-stopped';
+
+            document.getElementById('ufw-status').innerText = data.ufw_status.toUpperCase();
+        } catch (err) {
+            console.error('Failed to fetch status:', err);
+        }
+    }
+
+    async function updateFirewall() {
+        const port = document.getElementById('port-input').value;
+        const action = document.getElementById('action-select').value;
+        const toast = document.getElementById('toast');
+
+        if (!port) {
+            toast.innerText = 'Please enter a valid port number.';
+            toast.style.color = '#ef4444';
+            return;
+        }
+
+        toast.innerText = 'Updating firewall...';
+        toast.style.color = '#38bdf8';
+
+        try {
+            const res = await fetch(`${API_URL}/firewall`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ port: port.toString(), action })
+            });
+
+            const result = await res.json();
+            if (res.ok) {
+                toast.innerText = result.message;
+                toast.style.color = '#22c55e';
+            } else {
+                toast.innerText = result.error || 'Failed to update firewall';
+                toast.style.color = '#ef4444';
+            }
+        } catch (err) {
+            toast.innerText = 'Error connecting to backend API';
+            toast.style.color = '#ef4444';
+        }
+    }
+
+    // Auto load status on start
+    fetchStatus();
+    setInterval(fetchStatus, 10000); // refresh every 10s
+</script>
+
+</body>
+</html>
