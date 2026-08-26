@@ -69,7 +69,7 @@
             margin-top: 15px;
         }
 
-        input, select, button {
+        input, select, button, textarea {
             padding: 10px 14px;
             border-radius: 6px;
             border: 1px solid #475569;
@@ -162,6 +162,25 @@
         <div id="db-alert" class="db-pass-alert" style="display: none;"></div>
     </div>
 
+    <!-- Cloudflare SSL Installer Section -->
+    <div class="card">
+        <h2>Install Cloudflare SSL Certificate</h2>
+        <p style="color: #94a3b8; font-size: 0.9rem;">Paste Cloudflare Origin CA Certificate & Private Key below.</p>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+            <select id="ssl-domain-select" style="width: 100%;">
+                <option value="">Select Domain...</option>
+            </select>
+            
+            <textarea id="ssl-cert-input" rows="5" placeholder="Paste Origin Certificate (.crt / PEM) here...&#10;-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+            
+            <textarea id="ssl-key-input" rows="5" placeholder="Paste Private Key (.key) here...&#10;-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+
+            <button onclick="installSSL()" style="width: 200px;">Install Cloudflare SSL</button>
+        </div>
+        <div id="ssl-toast" class="toast"></div>
+    </div>
+
     <!-- Managed Websites List -->
     <div class="card">
         <h2>Managed Websites</h2>
@@ -225,8 +244,10 @@
             const domains = await res.json();
             const listElem = document.getElementById('domain-list');
             const selectElem = document.getElementById('db-domain-select');
+            const sslSelectElem = document.getElementById('ssl-domain-select');
 
             selectElem.innerHTML = '<option value="">Select Domain...</option>';
+            sslSelectElem.innerHTML = '<option value="">Select Domain...</option>';
 
             if (!domains || domains.length === 0) {
                 listElem.innerHTML = '<tr><td colspan="3" style="padding: 10px; color: #94a3b8;">No websites configured yet.</td></tr>';
@@ -235,6 +256,7 @@
 
             listElem.innerHTML = domains.map(d => {
                 selectElem.innerHTML += `<option value="${d.domain}">${d.domain}</option>`;
+                sslSelectElem.innerHTML += `<option value="${d.domain}">${d.domain}</option>`;
                 
                 const hasDB = d.db_name && d.db_name !== '-';
                 const dbText = hasDB 
@@ -385,6 +407,44 @@
             }
         } catch (err) {
             alert('Error connecting to backend API');
+        }
+    }
+
+    async function installSSL() {
+        const domain = document.getElementById('ssl-domain-select').value;
+        const cert = document.getElementById('ssl-cert-input').value;
+        const key = document.getElementById('ssl-key-input').value;
+        const toast = document.getElementById('ssl-toast');
+
+        if (!domain || !cert || !key) {
+            toast.innerText = 'Please select a domain and paste both Certificate and Private Key.';
+            toast.style.color = '#ef4444';
+            return;
+        }
+
+        toast.innerText = 'Installing SSL Certificate...';
+        toast.style.color = '#38bdf8';
+
+        try {
+            const res = await fetch(`${API_URL}/ssl`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, cert, key })
+            });
+
+            const result = await res.json();
+            if (res.ok) {
+                toast.innerText = result.message;
+                toast.style.color = '#22c55e';
+                document.getElementById('ssl-cert-input').value = '';
+                document.getElementById('ssl-key-input').value = '';
+            } else {
+                toast.innerText = result.error || 'Failed to install SSL';
+                toast.style.color = '#ef4444';
+            }
+        } catch (err) {
+            toast.innerText = 'Error connecting to backend API';
+            toast.style.color = '#ef4444';
         }
     }
 

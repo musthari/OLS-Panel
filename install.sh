@@ -1,11 +1,10 @@
 #!/bin/bash
 # =================================================================
-# OLS Panel Automated Installer for Debian
+# OLS Panel Automated Installer for Debian 13 (Trixie) & 12 (Bookworm)
 # =================================================================
 
 set -e
 
-# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -15,13 +14,11 @@ echo -e "${GREEN}=================================================${NC}"
 echo -e "${GREEN}       OLS Panel Installer (Debian)             ${NC}"
 echo -e "${GREEN}=================================================${NC}"
 
-# Check Root
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}Error: Please run this script as root.${NC}"
   exit 1
 fi
 
-# Ensure full repository is available (Support for direct curl execution)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 if [ ! -d "$SCRIPT_DIR/scripts/configs" ]; then
@@ -33,7 +30,6 @@ if [ ! -d "$SCRIPT_DIR/scripts/configs" ]; then
     cd /tmp/OLS-Panel
 fi
 
-# Prompt for Custom SSH Port (Support curl execution via /dev/tty)
 if [ -t 0 ]; then
     read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT
 else
@@ -92,15 +88,12 @@ cp -r "$SCRIPT_DIR/backend" "$SCRIPT_DIR/frontend" "$SCRIPT_DIR/scripts" /opt/ol
 
 cd /opt/ols-panel/backend
 
-# Merapikan dan memverifikasi modul secara aman
 echo "[Go] Resolving module dependencies..."
 go mod tidy
 
-# Compile Backend Binary
 echo "[Go] Compiling backend binary..."
 go build -o /opt/ols-panel/panel-backend main.go
 
-# Create Systemd Service
 cat << 'EOF' > /etc/systemd/system/ols-panel.service
 [Unit]
 Description=OLS Lite Control Panel Service
@@ -122,7 +115,6 @@ systemctl daemon-reload
 systemctl enable ols-panel
 systemctl restart ols-panel
 
-# Generate Random Admin Password
 ADMIN_USER="admin"
 ADMIN_PASS=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
 

@@ -42,14 +42,20 @@ type DeleteVHostRequest struct {
 }
 
 type CreateDBRequest struct {
-	Domain   string `json:"domain"`
-	DBName   string `json:"db_name"`
-	DBUser   string `json:"db_user"`
+	Domain string `json:"domain"`
+	DBName string `json:"db_name"`
+	DBUser string `json:"db_user"`
 }
 
 type DeleteDBRequest struct {
 	DBName string `json:"db_name"`
 	DBUser string `json:"db_user"`
+}
+
+type SaveSSLRequest struct {
+	Domain string `json:"domain"`
+	Cert   string `json:"cert"`
+	Key    string `json:"key"`
 }
 
 type DomainInfo struct {
@@ -76,7 +82,6 @@ func generateRandomPassword(length int) string {
 }
 
 func getMySQLDB() (*sql.DB, error) {
-	// Koneksi MySQL via socket Unix root tanpa password
 	return sql.Open("mysql", "root@unix(/run/mysqld/mysqld.sock)/")
 }
 
@@ -145,7 +150,6 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		// Pembuatan Domain & Linux User Baru
 		var req CreateVHostRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil || req.Domain == "" || req.Username == "" {
@@ -213,7 +217,6 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodDelete {
-		// Hapus Domain, Konfigurasi, & Folder
 		var req DeleteVHostRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil || req.Domain == "" {
@@ -224,11 +227,9 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 		domain := strings.ToLower(strings.TrimSpace(req.Domain))
 
 		if runtime.GOOS == "linux" {
-			// 1. Hapus direktori VHost di OpenLiteSpeed
 			olsConfDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s", domain)
 			os.RemoveAll(olsConfDir)
 
-			// 2. Bersihkan blok virtualhost dari httpd_config.conf
 			mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
 			if content, err := ioutil.ReadFile(mainConfigPath); err == nil {
 				lines := strings.Split(string(content), "\n")
@@ -251,12 +252,10 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 				ioutil.WriteFile(mainConfigPath, []byte(strings.Join(newLines, "\n")), 0644)
 			}
 
-			// 3. Hapus Linux System User dan Home Folder jika diminta
 			if req.Username != "" {
 				exec.Command("userdel", "-r", req.Username).Run()
 			}
 
-			// 4. Reload OLS
 			exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
 		}
 
@@ -284,7 +283,6 @@ func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			dbMap := make(map[string]map[string]string)
 
-			// Ambil metadata database terkait dari OLS-Panel DB Store
 			dbMetaPath := "/opt/ols-panel/db_meta.json"
 			if metaData, err := ioutil.ReadFile(dbMetaPath); err == nil {
 				json.Unmarshal(metaData, &dbMap)
@@ -304,7 +302,6 @@ func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
 							siteType = "wordpress"
 						}
 
-						// Extract username from vhRoot
 						for _, line := range strings.Split(strContent, "\n") {
 							if strings.HasPrefix(strings.TrimSpace(line), "docRoot") {
 								parts := strings.Split(line, "/")
@@ -346,7 +343,6 @@ func databaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		// Buat Database & User MySQL
 		var req CreateDBRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil || req.Domain == "" || req.DBName == "" || req.DBUser == "" {
@@ -366,19 +362,16 @@ func databaseHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			defer db.Close()
 
-			// 1. Create Database
 			_, err = db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", dbName))
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create DB: %v", err), http.StatusInternalServerError)
 				return
 			}
 
-			// 2. Create User & Grant Privileges
 			db.Exec(fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s';", dbUser, dbPass))
 			db.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';", dbName, dbUser))
 			db.Exec("FLUSH PRIVILEGES;")
 
-			// 3. Simpan metadata hubungan domain ke DB
 			dbMetaPath := "/opt/ols-panel/db_meta.json"
 			dbMap := make(map[string]map[string]string)
 
@@ -406,7 +399,6 @@ func databaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodDelete {
-		// Hapus Database & User MySQL
 		var req DeleteDBRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil || req.DBName == "" {
@@ -428,7 +420,6 @@ func databaseHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			db.Exec("FLUSH PRIVILEGES;")
 
-			// Bersihkan metadata
 			dbMetaPath := "/opt/ols-panel/db_meta.json"
 			dbMap := make(map[string]map[string]string)
 
@@ -454,6 +445,62 @@ func databaseHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
+func sslHandler(w http.ResponseWriter, r *http.Request) {
+	enableCORS(&w)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SaveSSLRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil || req.Domain == "" || req.Cert == "" || req.Key == "" {
+		http.Error(w, "Domain, Certificate, and Key are required", http.StatusBadRequest)
+		return
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+
+	if runtime.GOOS == "linux" {
+		sslDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s/ssl", domain)
+		os.MkdirAll(sslDir, 0700)
+
+		certPath := filepath.Join(sslDir, "fullchain.pem")
+		keyPath := filepath.Join(sslDir, "privkey.pem")
+
+		errCert := ioutil.WriteFile(certPath, []byte(strings.TrimSpace(req.Cert)), 0600)
+		errKey := ioutil.WriteFile(keyPath, []byte(strings.TrimSpace(req.Key)), 0600)
+
+		if errCert != nil || errKey != nil {
+			http.Error(w, "Failed to write SSL certificate files", http.StatusInternalServerError)
+			return
+		}
+
+		confPath := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s/vhconf.conf", domain)
+		content, err := ioutil.ReadFile(confPath)
+		if err == nil {
+			strContent := string(content)
+
+			if !strings.Contains(strContent, "vhssl") {
+				sslConfig := fmt.Sprintf("\nvhssl  {\n  keyFile                 %s\n  certFile                %s\n  certChain               1\n}\n", keyPath, certPath)
+				strContent += sslConfig
+				ioutil.WriteFile(confPath, []byte(strContent), 0644)
+			}
+		}
+
+		exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf("Cloudflare SSL Certificate successfully installed for %s!", domain),
+	})
+}
+
 func main() {
 	fs := http.FileServer(http.Dir("../frontend"))
 	http.Handle("/", fs)
@@ -463,6 +510,7 @@ func main() {
 	http.HandleFunc("/api/vhost", vhostHandler)
 	http.HandleFunc("/api/vhosts", getVHostsHandler)
 	http.HandleFunc("/api/database", databaseHandler)
+	http.HandleFunc("/api/ssl", sslHandler)
 
 	port := ":8080"
 	fmt.Printf("[OLS-Panel Backend] Server started on http://localhost%s\n", port)
