@@ -49,7 +49,7 @@ fi
 ufw allow 80/tcp comment 'HTTP Web Traffic'
 ufw allow 443/tcp comment 'HTTPS Web Traffic'
 ufw allow 7080/tcp comment 'OpenLiteSpeed Admin Console'
-ufw allow 8443/tcp comment 'OLS Control Panel UI'
+ufw allow 8080/tcp comment 'OLS Control Panel UI'
 
 # Allow the configured SSH port
 ufw allow "$SSH_PORT"/tcp comment 'Configured SSH Port'
