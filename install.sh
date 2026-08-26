@@ -30,16 +30,9 @@ if [ ! -d "$SCRIPT_DIR/scripts/configs" ]; then
     cd /tmp/OLS-Panel
 fi
 
-if [ -t 0 ]; then
-    read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT
-else
-    read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT </dev/tty || SSH_PORT=22
-fi
-SSH_PORT=${SSH_PORT:-22}
-
 echo -e "\n${YELLOW}[1/6] Updating system packages...${NC}"
 apt-get update -y && apt-get upgrade -y
-apt-get install -y curl wget git build-essential golang-go mariadb-server ufw lsb-release gnupg2 ca-certificates
+apt-get install -y curl wget git build-essential golang-go mariadb-server ufw lsb-release gnupg2 ca-certificates net-tools
 
 echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
@@ -78,9 +71,9 @@ fi
 
 systemctl restart mariadb
 
-echo -e "\n${YELLOW}[4/6] Configuring Firewall & SSH Port...${NC}"
+echo -e "\n${YELLOW}[4/6] Configuring Firewall & Auto-detecting SSH...${NC}"
 chmod +x "$SCRIPT_DIR/scripts/firewall-setup.sh"
-"$SCRIPT_DIR/scripts/firewall-setup.sh" "$SSH_PORT"
+"$SCRIPT_DIR/scripts/firewall-setup.sh"
 
 echo -e "\n${YELLOW}[5/6] Building Backend & Setting Up Systemd...${NC}"
 mkdir -p /opt/ols-panel
@@ -124,5 +117,4 @@ echo -e "${GREEN}=================================================${NC}"
 echo -e "Panel URL       : http://$(hostname -I | awk '{print $1}'):8080"
 echo -e "Admin Username  : ${YELLOW}${ADMIN_USER}${NC}"
 echo -e "Admin Password  : ${YELLOW}${ADMIN_PASS}${NC}"
-echo -e "Configured SSH  : Port ${YELLOW}${SSH_PORT}${NC}"
 echo -e "${GREEN}=================================================${NC}"
