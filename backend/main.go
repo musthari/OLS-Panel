@@ -39,7 +39,9 @@ func enableCORS(w *http.ResponseWriter) {
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
-	if r.Method == "OPTIONS" { return }
+	if r.Method == "OPTIONS" {
+		return
+	}
 
 	olsStatus := "running"
 	if runtime.GOOS == "linux" {
@@ -62,7 +64,9 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
 func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
-	if r.Method == "OPTIONS" { return }
+	if r.Method == "OPTIONS" {
+		return
+	}
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -91,10 +95,12 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// API Endpoint: Create New Linux User & OLS VirtualHost
+// API Endpoint: Create New Linux User & OLS VirtualHost (Secured)
 func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
-	if r.Method == "OPTIONS" { return }
+	if r.Method == "OPTIONS" {
+		return
+	}
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -112,11 +118,15 @@ func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 
 	if runtime.GOOS == "linux" {
-		// 1. Create Linux System User if not exists
-		exec.Command("useradd", "-m", "-s", "/bin/bash", username).Run()
+		// 1. Create Linux System User with NO interactive shell (/usr/sbin/nologin)
+		exec.Command("useradd", "-m", "-s", "/usr/sbin/nologin", username).Run()
+
+		// Secure Home Directory Permissions (chmod 711) so other users cannot traverse it
+		userHome := fmt.Sprintf("/home/%s", username)
+		os.Chmod(userHome, 0711)
 
 		// 2. Setup Directory Structure
-		vhRoot := fmt.Sprintf("/home/%s/domains/%s", username, domain)
+		vhRoot := fmt.Sprintf("%s/domains/%s", userHome, domain)
 		docRoot := filepath.Join(vhRoot, "html")
 		logsDir := filepath.Join(vhRoot, "logs")
 
@@ -124,11 +134,11 @@ func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 		os.MkdirAll(logsDir, 0755)
 
 		// Create dummy index file
-		indexContent := fmt.Sprintf("<h1>Welcome to %s</h1><p>Powered by OLS Panel</p>", domain)
+		indexContent := fmt.Sprintf("<h1>Welcome to %s</h1><p>Powered by OLS Panel (Secured Environment)</p>", domain)
 		ioutil.WriteFile(filepath.Join(docRoot, "index.html"), []byte(indexContent), 0644)
 
-		// Set directory ownership
-		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), fmt.Sprintf("/home/%s/domains", username)).Run()
+		// Set directory ownership strictly to the created system user
+		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), fmt.Sprintf("%s/domains", userHome)).Run()
 
 		// 3. Load VHost Template Configuration
 		templatePath := "/opt/ols-panel/scripts/configs/vhost-generic.conf"
@@ -152,7 +162,7 @@ func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 		olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
 		ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
 
-		// 4. Append VHost Mapping to OLS Main Config (httpd_config.conf)
+		// 4. Append VHost Mapping to OLS Main Config (httpd_config.conf) if not already present
 		mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
 		vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
 
@@ -168,7 +178,7 @@ func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": fmt.Sprintf("VirtualHost for %s (User: %s) successfully created!", domain, username),
+		"message": fmt.Sprintf("Secured VirtualHost for %s (User: %s) successfully created!", domain, username),
 	})
 }
 
