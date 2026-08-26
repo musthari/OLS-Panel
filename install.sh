@@ -34,7 +34,7 @@ echo -e "\n${YELLOW}[1/6] Updating system packages...${NC}"
 apt-get update -y && apt-get upgrade -y
 apt-get install -y curl wget git build-essential golang-go mariadb-server ufw lsb-release gnupg2 ca-certificates net-tools
 
-echo -e "\n${YELLOW}[2/6] Installing & Configuring OpenLiteSpeed Listeners...${NC}"
+echo -e "\n${YELLOW}[2/6] Installing & Configuring OpenLiteSpeed Listeners (IPv4 Only)...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
     OS_CODENAME=$(lsb_release -sc)
     wget -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg || \
@@ -45,27 +45,29 @@ if [ ! -d "/usr/local/lsws" ]; then
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
-# Konfigurasi Listener Default Port 80 & Port 443 di OpenLiteSpeed
+# Configure IPv4-Only Listeners (0.0.0.0) in OpenLiteSpeed
 OLS_CONF="/usr/local/lsws/conf/httpd_config.conf"
 if [ -f "$OLS_CONF" ]; then
-    if ! grep -q "listener HTTP " "$OLS_CONF"; then
-        cat << 'EOF' >> "$OLS_CONF"
+    # Clean old listeners if present
+    sed -i '/listener HTTP {/,/}/d' "$OLS_CONF"
+    sed -i '/listener HTTPS {/,/}/d' "$OLS_CONF"
+
+    cat << 'EOF' >> "$OLS_CONF"
 
 listener HTTP {
-  address                 *:80
+  address                 0.0.0.0:80
   secure                  0
   map                     * *
 }
 
 listener HTTPS {
-  address                 *:443
+  address                 0.0.0.0:443
   secure                  1
   keyFile                 /usr/local/lsws/admin/conf/webadmin.key
   certFile                /usr/local/lsws/admin/conf/webadmin.crt
   map                     * *
 }
 EOF
-    fi
 fi
 
 /usr/local/lsws/bin/lswsctrl restart

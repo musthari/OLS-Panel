@@ -280,13 +280,28 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 			olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
 			ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
 
+			// Append VHost Block & Listener Mapping to httpd_config.conf
 			mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
 			vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
 
-			f, err := os.OpenFile(mainConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
-			if err == nil {
-				f.WriteString(vhostMapping)
-				f.Close()
+			if content, err := ioutil.ReadFile(mainConfigPath); err == nil {
+				strContent := string(content)
+
+				if !strings.Contains(strContent, fmt.Sprintf("virtualhost %s {", domain)) {
+					strContent += vhostMapping
+				}
+
+				// Map VirtualHost to Listener HTTP & HTTPS
+				mapRule := fmt.Sprintf("  map                     %s %s, www.%s\n", domain, domain, domain)
+
+				if strings.Contains(strContent, "listener HTTP {") && !strings.Contains(strContent, fmt.Sprintf("map                     %s", domain)) {
+					strContent = strings.Replace(strContent, "listener HTTP {", "listener HTTP {\n"+mapRule, 1)
+				}
+				if strings.Contains(strContent, "listener HTTPS {") {
+					strContent = strings.Replace(strContent, "listener HTTPS {", "listener HTTPS {\n"+mapRule, 1)
+				}
+
+				ioutil.WriteFile(mainConfigPath, []byte(strContent), 0644)
 			}
 
 			exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
@@ -320,6 +335,9 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 				inBlock := false
 
 				for _, line := range lines {
+					if strings.Contains(line, fmt.Sprintf("map                     %s", domain)) {
+						continue // Skip listener mapping line
+					}
 					if strings.HasPrefix(strings.TrimSpace(line), fmt.Sprintf("virtualhost %s {", domain)) {
 						inBlock = true
 						continue
