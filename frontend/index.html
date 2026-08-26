@@ -134,6 +134,25 @@
         </div>
         <div id="vhost-toast" class="toast"></div>
     </div>
+    
+    <!-- Managed Websites List -->
+<div class="card">
+    <h2>Managed Websites</h2>
+    <table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px;">
+        <thead>
+            <tr style="border-bottom: 1px solid #334155; color: #94a3b8;">
+                <th style="padding: 10px;">Domain</th>
+                <th style="padding: 10px;">Type</th>
+                <th style="padding: 10px;">Status</th>
+            </tr>
+        </thead>
+        <tbody id="domain-list">
+            <tr>
+                <td colspan="3" style="padding: 10px; color: #94a3b8;">Loading domains...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
 
     <!-- Firewall Manager Section -->
     <div class="card">
@@ -246,6 +265,34 @@
 
     fetchStatus();
     setInterval(fetchStatus, 10000);
+    
+    async function fetchDomains() {
+    try {
+        const res = await fetch(`${API_URL}/vhosts`);
+        const domains = await res.json();
+        const listElem = document.getElementById('domain-list');
+
+        if (!domains || domains.length === 0) {
+            listElem.innerHTML = '<tr><td colspan="3" style="padding: 10px; color: #94a3b8;">No websites configured yet.</td></tr>';
+            return;
+        }
+
+        listElem.innerHTML = domains.map(d => `
+            <tr style="border-bottom: 1px solid #1e293b;">
+                <td style="padding: 10px; font-weight: bold; color: #38bdf8;">${d.domain}</td>
+                <td style="padding: 10px;"><span style="background: #334155; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">${d.site_type.toUpperCase()}</span></td>
+                <td style="padding: 10px; color: #22c55e;">Active</td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        console.error('Failed to fetch domains:', err);
+    }
+}
+
+// Panggil saat halaman dimuat
+fetchDomains();
+
+
 </script>
 
 </body>

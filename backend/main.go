@@ -182,6 +182,49 @@ func createVHostHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type DomainInfo struct {
+	Domain   string `json:"domain"`
+	Path     string `json:"path"`
+	SiteType string `json:"site_type"`
+}
+
+// Endpoint GET: Membaca daftar VHost dari folder /usr/local/lsws/conf/vhosts/
+func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
+	enableCORS(&w)
+	if r.Method == "OPTIONS" { return }
+
+	var domains []DomainInfo
+
+	if runtime.GOOS == "linux" {
+		vhostDir := "/usr/local/lsws/conf/vhosts"
+		files, err := ioutil.ReadDir(vhostDir)
+		if err == nil {
+			for _, file := range files {
+				if file.IsDir() {
+					domainName := file.Name()
+					confPath := filepath.Join(vhostDir, domainName, "vhconf.conf")
+					
+					siteType := "generic"
+					if content, err := ioutil.ReadFile(confPath); err == nil {
+						if strings.Contains(string(content), "autoLoadHtaccess") {
+							siteType = "wordpress"
+						}
+					}
+
+					domains = append(domains, DomainInfo{
+						Domain:   domainName,
+						Path:     fmt.Sprintf("/home/*/domains/%s/html", domainName),
+						SiteType: siteType,
+					})
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(domains)
+}
+
 func main() {
 	fs := http.FileServer(http.Dir("../frontend"))
 	http.Handle("/", fs)
@@ -189,6 +232,7 @@ func main() {
 	http.HandleFunc("/api/status", statusHandler)
 	http.HandleFunc("/api/firewall", firewallHandler)
 	http.HandleFunc("/api/vhost", createVHostHandler)
+	http.HandleFunc("/api/vhosts", getVHostsHandler) // Endpoint baru untuk List Domain
 
 	port := ":8080"
 	fmt.Printf("[OLS-Panel Backend] Server started on http://localhost%s\n", port)
