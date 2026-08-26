@@ -1,6 +1,6 @@
 #!/bin/bash
 # =================================================================
-# OLS Panel Automated Installer for Debian 12
+# OLS Panel Automated Installer for Debian
 # =================================================================
 
 set -e
@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${GREEN}=================================================${NC}"
-echo -e "${GREEN}       OLS Panel Installer (Debian 12)           ${NC}"
+echo -e "${GREEN}       OLS Panel Installer (Debian)             ${NC}"
 echo -e "${GREEN}=================================================${NC}"
 
 # Check Root
@@ -21,7 +21,19 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Prompt for Custom SSH Port (Explicitly read from /dev/tty if available)
+# Ensure full repository is available (Support for direct curl execution)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [ ! -d "$SCRIPT_DIR/scripts/configs" ]; then
+    echo -e "${YELLOW}[Notice] Running via curl/remote. Downloading full repository...${NC}"
+    apt-get update -y && apt-get install -y git
+    rm -rf /tmp/OLS-Panel
+    git clone https://github.com/musthari/OLS-Panel.git /tmp/OLS-Panel
+    SCRIPT_DIR="/tmp/OLS-Panel"
+    cd /tmp/OLS-Panel
+fi
+
+# Prompt for Custom SSH Port (Support curl execution via /dev/tty)
 if [ -t 0 ]; then
     read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT
 else
@@ -31,36 +43,20 @@ SSH_PORT=${SSH_PORT:-22}
 
 echo -e "\n${YELLOW}[1/6] Updating system packages...${NC}"
 apt-get update -y && apt-get upgrade -y
-apt-get install -y curl wget git build-essential golang-go mariadb-server ufw
+apt-get install -y curl wget git build-essential golang-go mariadb-server ufw lsb-release gnupg2 ca-certificates
 
 echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
-    # Install pendukung kunci GPG & LSB tools
-    apt-get install -y lsb-release gnupg2 ca-certificates wget
-
-    # Dapatkan codename OS secara dinamis (misal: trixie atau bookworm)
     OS_CODENAME=$(lsb_release -sc)
-
-    # Import kunci GPG OpenLiteSpeed
     wget -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg || \
     wget --no-check-certificate -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg
 
-    # Tambahkan repository sesuai codename OS aktif
     echo "deb http://rpms.litespeedtech.com/debian/ ${OS_CODENAME} main" > /etc/apt/sources.list.d/openlitespeed.list
-
-    # Update daftar paket apt
     apt-get update -y
-    
-    # Install OpenLiteSpeed dan LSPHP 8.2
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
-# Get absolute directory path of the current script
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
 echo -e "\n${YELLOW}[3/6] Applying RAM-based MySQL Optimizations...${NC}"
-
-# Read total RAM in MB dynamically from /proc/meminfo
 TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_RAM_MB=$((TOTAL_RAM_KB / 1024))
 
@@ -77,7 +73,6 @@ else
     CONFIG_FILE="$SCRIPT_DIR/scripts/configs/my-4gb.cnf"
 fi
 
-# Copy the detected configuration file safely
 if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" /etc/mysql/mariadb.conf.d/50-server.cnf
     echo "[Optimization] Applied $(basename "$CONFIG_FILE") successfully."
@@ -88,12 +83,12 @@ fi
 systemctl restart mariadb
 
 echo -e "\n${YELLOW}[4/6] Configuring Firewall & SSH Port...${NC}"
-chmod +x scripts/firewall-setup.sh
-./scripts/firewall-setup.sh "$SSH_PORT"
+chmod +x "$SCRIPT_DIR/scripts/firewall-setup.sh"
+"$SCRIPT_DIR/scripts/firewall-setup.sh" "$SSH_PORT"
 
 echo -e "\n${YELLOW}[5/6] Building Backend & Setting Up Systemd...${NC}"
 mkdir -p /opt/ols-panel
-cp -r backend frontend /opt/ols-panel/
+cp -r "$SCRIPT_DIR/backend" "$SCRIPT_DIR/frontend" /opt/ols-panel/
 
 cd /opt/ols-panel/backend
 go build -o /opt/ols-panel/panel-backend main.go
