@@ -30,6 +30,13 @@ type FirewallRequest struct {
 	Action string `json:"action"`
 }
 
+type FirewallRule struct {
+	Port     string `json:"port"`
+	Protocol string `json:"protocol"`
+	Action   string `json:"action"`
+	Comment  string `json:"comment"`
+}
+
 type CreateVHostRequest struct {
 	Domain   string `json:"domain"`
 	Username string `json:"username"`
@@ -110,20 +117,12 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-type FirewallRule struct {
-	Port     string `json:"port"`
-	Protocol string `json:"protocol"`
-	Action   string `json:"action"`
-	Comment  string `json:"comment"`
-}
-
 func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
 	if r.Method == "OPTIONS" {
 		return
 	}
 
-	// 1. GET: Ambil daftar port UFW yang terbuka
 	if r.Method == http.MethodGet {
 		var rules []FirewallRule
 
@@ -134,7 +133,6 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 				for _, line := range lines {
 					line = strings.TrimSpace(line)
 					if strings.HasPrefix(line, "[") {
-						// Format baris UFW: [ 1] 80/tcp ALLOW IN Anywhere # comment
 						parts := strings.Fields(line)
 						if len(parts) >= 3 {
 							portProto := parts[1]
@@ -152,7 +150,6 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 								comment = strings.TrimSpace(line[idx+1:])
 							}
 
-							// Hindari duplikat IPv6 jika port sama
 							exists := false
 							for _, r := range rules {
 								if r.Port == port && r.Protocol == proto {
@@ -180,7 +177,6 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. POST: Tambahkan port UFW baru
 	if r.Method == http.MethodPost {
 		var req FirewallRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -205,7 +201,6 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. DELETE: Hapus port dari UFW
 	if r.Method == http.MethodDelete {
 		var req FirewallRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
