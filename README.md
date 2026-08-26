@@ -1,1 +1,1 @@
-# OpenLiteSpeed Lite Panel
+# OLS Panel - Minimalist Control Panel for OpenLiteSpeed
