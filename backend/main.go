@@ -3,24 +3,32 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
 
-// Response Structure
 type SystemStatus struct {
-	OS          string `json:"os"`
-	CoreCount   int    `json:"core_count"`
-	OLSStatus   string `json:"ols_status"`
-	UFWStatus   string `json:"ufw_status"`
+	OS        string `json:"os"`
+	CoreCount int    `json:"core_count"`
+	OLSStatus string `json:"ols_status"`
+	UFWStatus string `json:"ufw_status"`
 }
 
 type FirewallRequest struct {
 	Port   string `json:"port"`
-	Action string `json:"action"` // "allow" or "deny"
+	Action string `json:"action"`
+}
+
+type CreateVHostRequest struct {
+	Domain   string `json:"domain"`
+	Username string `json:"username"`
+	SiteType string `json:"site_type"` // "wordpress" or "generic"
 }
 
 func enableCORS(w *http.ResponseWriter) {
@@ -29,12 +37,10 @@ func enableCORS(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
-// API Endpoint: Health Check & System Status
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
 	if r.Method == "OPTIONS" { return }
 
-	// Check OpenLiteSpeed Status (Linux only)
 	olsStatus := "running"
 	if runtime.GOOS == "linux" {
 		out, err := exec.Command("systemctl", "is-active", "lsws").Output()
@@ -54,7 +60,6 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
-// API Endpoint: Manage Firewall Port (Allow / Deny)
 func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
 	if r.Method == "OPTIONS" { return }
@@ -71,7 +76,6 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute ufw command via sudo
 	if runtime.GOOS == "linux" {
 		cmd := exec.Command("sudo", "ufw", req.Action, req.Port+"/tcp")
 		err := cmd.Run()
@@ -87,14 +91,94 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// API Endpoint: Create New Linux User & OLS VirtualHost
+func createVHostHandler(w http.ResponseWriter, r *http.Request) {
+	enableCORS(&w)
+	if r.Method == "OPTIONS" { return }
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CreateVHostRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil || req.Domain == "" || req.Username == "" {
+		http.Error(w, "Invalid request parameters", http.StatusBadRequest)
+		return
+	}
+
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	username := strings.ToLower(strings.TrimSpace(req.Username))
+
+	if runtime.GOOS == "linux" {
+		// 1. Create Linux System User if not exists
+		exec.Command("useradd", "-m", "-s", "/bin/bash", username).Run()
+
+		// 2. Setup Directory Structure
+		vhRoot := fmt.Sprintf("/home/%s/domains/%s", username, domain)
+		docRoot := filepath.Join(vhRoot, "html")
+		logsDir := filepath.Join(vhRoot, "logs")
+
+		os.MkdirAll(docRoot, 0755)
+		os.MkdirAll(logsDir, 0755)
+
+		// Create dummy index file
+		indexContent := fmt.Sprintf("<h1>Welcome to %s</h1><p>Powered by OLS Panel</p>", domain)
+		ioutil.WriteFile(filepath.Join(docRoot, "index.html"), []byte(indexContent), 0644)
+
+		// Set directory ownership
+		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), fmt.Sprintf("/home/%s/domains", username)).Run()
+
+		// 3. Load VHost Template Configuration
+		templatePath := "/opt/ols-panel/scripts/configs/vhost-generic.conf"
+		if req.SiteType == "wordpress" {
+			templatePath = "/opt/ols-panel/scripts/configs/vhost-wordpress.conf"
+		}
+
+		configData, err := ioutil.ReadFile(templatePath)
+		if err != nil {
+			http.Error(w, "Failed to load VHost template", http.StatusInternalServerError)
+			return
+		}
+
+		// Replace variables in template
+		vhConfig := strings.ReplaceAll(string(configData), "$VH_NAME", domain)
+		vhConfig = strings.ReplaceAll(vhConfig, "$VH_ROOT", vhRoot)
+
+		// Save VHost Config File to OpenLiteSpeed Directory
+		olsConfDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s", domain)
+		os.MkdirAll(olsConfDir, 0755)
+		olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
+		ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
+
+		// 4. Append VHost Mapping to OLS Main Config (httpd_config.conf)
+		mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
+		vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
+
+		f, err := os.OpenFile(mainConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			f.WriteString(vhostMapping)
+			f.Close()
+		}
+
+		// 5. Reload OpenLiteSpeed
+		exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf("VirtualHost for %s (User: %s) successfully created!", domain, username),
+	})
+}
+
 func main() {
-// Serve static UI files from frontend directory
 	fs := http.FileServer(http.Dir("../frontend"))
 	http.Handle("/", fs)
 
-	// API Routes
 	http.HandleFunc("/api/status", statusHandler)
 	http.HandleFunc("/api/firewall", firewallHandler)
+	http.HandleFunc("/api/vhost", createVHostHandler)
 
 	port := ":8080"
 	fmt.Printf("[OLS-Panel Backend] Server started on http://localhost%s\n", port)

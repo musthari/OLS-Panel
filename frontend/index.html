@@ -22,10 +22,7 @@
             padding: 20px;
         }
 
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-        }
+        .container { max-width: 900px; margin: 0 auto; }
 
         header {
             display: flex;
@@ -67,6 +64,7 @@
 
         .form-group {
             display: flex;
+            flex-wrap: wrap;
             gap: 10px;
             margin-top: 15px;
         }
@@ -90,7 +88,7 @@
         }
 
         button:hover { opacity: 0.9; }
-        #toast { margin-top: 10px; font-size: 0.9rem; }
+        .toast { margin-top: 10px; font-size: 0.9rem; }
     </style>
 </head>
 <body>
@@ -101,7 +99,7 @@
         <span id="os-badge" style="color: #94a3b8; font-size: 0.9rem;">OS: Loading...</span>
     </header>
 
-    <!-- System Status Section -->
+    <!-- System Status -->
     <div class="card">
         <h2>System Overview</h2>
         <div class="status-grid">
@@ -120,6 +118,23 @@
         </div>
     </div>
 
+    <!-- Create VirtualHost / Website Section -->
+    <div class="card">
+        <h2>Create Website & Linux User</h2>
+        <p style="color: #94a3b8; font-size: 0.9rem;">Add a new domain with specialized config preset.</p>
+        
+        <div class="form-group">
+            <input type="text" id="domain-input" placeholder="domain.com" style="flex: 2; min-width: 180px;">
+            <input type="text" id="user-input" placeholder="username" style="flex: 1; min-width: 120px;">
+            <select id="type-select" style="flex: 1; min-width: 140px;">
+                <option value="wordpress">WordPress (LSCache Enabled)</option>
+                <option value="generic">Generic PHP / HTML</option>
+            </select>
+            <button onclick="createVHost()">Create Site</button>
+        </div>
+        <div id="vhost-toast" class="toast"></div>
+    </div>
+
     <!-- Firewall Manager Section -->
     <div class="card">
         <h2>Firewall Manager</h2>
@@ -133,7 +148,7 @@
             </select>
             <button onclick="updateFirewall()">Apply Rule</button>
         </div>
-        <div id="toast"></div>
+        <div id="toast" class="toast"></div>
     </div>
 </div>
 
@@ -155,6 +170,42 @@
             document.getElementById('ufw-status').innerText = data.ufw_status.toUpperCase();
         } catch (err) {
             console.error('Failed to fetch status:', err);
+        }
+    }
+
+    async function createVHost() {
+        const domain = document.getElementById('domain-input').value;
+        const username = document.getElementById('user-input').value;
+        const site_type = document.getElementById('type-select').value;
+        const toast = document.getElementById('vhost-toast');
+
+        if (!domain || !username) {
+            toast.innerText = 'Please enter domain and username.';
+            toast.style.color = '#ef4444';
+            return;
+        }
+
+        toast.innerText = 'Creating user & VirtualHost...';
+        toast.style.color = '#38bdf8';
+
+        try {
+            const res = await fetch(`${API_URL}/vhost`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, username, site_type })
+            });
+
+            const result = await res.json();
+            if (res.ok) {
+                toast.innerText = result.message;
+                toast.style.color = '#22c55e';
+            } else {
+                toast.innerText = result.error || 'Failed to create VirtualHost';
+                toast.style.color = '#ef4444';
+            }
+        } catch (err) {
+            toast.innerText = 'Error connecting to backend API';
+            toast.style.color = '#ef4444';
         }
     }
 
@@ -193,9 +244,8 @@
         }
     }
 
-    // Auto load status on start
     fetchStatus();
-    setInterval(fetchStatus, 10000); // refresh every 10s
+    setInterval(fetchStatus, 10000);
 </script>
 
 </body>
