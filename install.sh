@@ -55,18 +55,34 @@ if [ ! -d "/usr/local/lsws" ]; then
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
-echo -e "\n${YELLOW}[3/6] Applying RAM-based MySQL Optimizations...${NC}"
-TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+# Get absolute directory path of the current script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-if [ "$TOTAL_RAM" -le 1500 ]; then
+echo -e "\n${YELLOW}[3/6] Applying RAM-based MySQL Optimizations...${NC}"
+
+# Read total RAM in MB dynamically from /proc/meminfo
+TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_RAM_MB=$((TOTAL_RAM_KB / 1024))
+
+echo "[Optimization] Total System RAM detected: ${TOTAL_RAM_MB} MB"
+
+if [ "$TOTAL_RAM_MB" -le 1500 ]; then
     echo "[Optimization] VPS RAM <= 1.5GB detected. Applying 1GB preset..."
-    cp scripts/configs/my-1gb.cnf /etc/mysql/mariadb.conf.d/50-server.cnf
-elif [ "$TOTAL_RAM" -le 3500 ]; then
+    CONFIG_FILE="$SCRIPT_DIR/scripts/configs/my-1gb.cnf"
+elif [ "$TOTAL_RAM_MB" -le 3500 ]; then
     echo "[Optimization] VPS RAM <= 3.5GB detected. Applying 2GB preset..."
-    cp scripts/configs/my-2gb.cnf /etc/mysql/mariadb.conf.d/50-server.cnf
+    CONFIG_FILE="$SCRIPT_DIR/scripts/configs/my-2gb.cnf"
 else
     echo "[Optimization] High-RAM VPS detected. Applying 4GB+ preset..."
-    cp scripts/configs/my-4gb.cnf /etc/mysql/mariadb.conf.d/50-server.cnf
+    CONFIG_FILE="$SCRIPT_DIR/scripts/configs/my-4gb.cnf"
+fi
+
+# Copy the detected configuration file safely
+if [ -f "$CONFIG_FILE" ]; then
+    cp "$CONFIG_FILE" /etc/mysql/mariadb.conf.d/50-server.cnf
+    echo "[Optimization] Applied $(basename "$CONFIG_FILE") successfully."
+else
+    echo -e "${RED}[Warning] Configuration file $CONFIG_FILE not found! Skipping MariaDB tuning.${NC}"
 fi
 
 systemctl restart mariadb
