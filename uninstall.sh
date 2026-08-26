@@ -48,9 +48,19 @@ fi
 
 echo -e "\n${YELLOW}[3/4] Resetting Firewall Rules...${NC}"
 if command -v ufw >/dev/null 2>&1; then
-    ufw delete allow 8443/tcp || true
-    ufw delete allow 8080/tcp || true
-    echo "[Firewall] Panel ports removed from UFW rules."
+    # Hapus aturan port 8080 dan 8443 berdasarkan kueri nomor aturan UFW
+    for PORT in "8080" "8443"; do
+        # Loop untuk menghapus semua aturan (IPv4 & IPv6) yang mengandung port tersebut
+        while ufw status numbered | grep -q "$PORT"; do
+            NUM=$(ufw status numbered | grep "$PORT" | tail -n1 | sed -E 's/\[ *([0-9]+)\].*/\1/')
+            if [ -n "$NUM" ]; then
+                echo "y" | ufw delete "$NUM" >/dev/null 2>&1
+            else
+                break
+            fi
+        done
+    done
+    echo "[Firewall] Panel ports successfully cleaned from UFW."
 fi
 
 echo -e "\n${YELLOW}[4/4] Preserving OpenLiteSpeed & Databases...${NC}"
