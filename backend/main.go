@@ -110,37 +110,125 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+type FirewallRule struct {
+	Port     string `json:"port"`
+	Protocol string `json:"protocol"`
+	Action   string `json:"action"`
+	Comment  string `json:"comment"`
+}
+
 func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
 	if r.Method == "OPTIONS" {
 		return
 	}
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	// 1. GET: Ambil daftar port UFW yang terbuka
+	if r.Method == http.MethodGet {
+		var rules []FirewallRule
+
+		if runtime.GOOS == "linux" {
+			out, err := exec.Command("sudo", "ufw", "status", "numbered").Output()
+			if err == nil {
+				lines := strings.Split(string(out), "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "[") {
+						// Format baris UFW: [ 1] 80/tcp ALLOW IN Anywhere # comment
+						parts := strings.Fields(line)
+						if len(parts) >= 3 {
+							portProto := parts[1]
+							action := parts[2]
+
+							portParts := strings.Split(portProto, "/")
+							port := portParts[0]
+							proto := "tcp"
+							if len(portParts) > 1 {
+								proto = portParts[1]
+							}
+
+							comment := ""
+							if idx := strings.Index(line, "#"); idx != -1 {
+								comment = strings.TrimSpace(line[idx+1:])
+							}
+
+							// Hindari duplikat IPv6 jika port sama
+							exists := false
+							for _, r := range rules {
+								if r.Port == port && r.Protocol == proto {
+									exists = true
+									break
+								}
+							}
+
+							if !exists && port != "" {
+								rules = append(rules, FirewallRule{
+									Port:     port,
+									Protocol: proto,
+									Action:   action,
+									Comment:  comment,
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rules)
 		return
 	}
 
-	var req FirewallRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil || req.Port == "" || (req.Action != "allow" && req.Action != "deny") {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if runtime.GOOS == "linux" {
-		cmd := exec.Command("sudo", "ufw", req.Action, req.Port+"/tcp")
-		err := cmd.Run()
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to update firewall: %v", err), http.StatusInternalServerError)
+	// 2. POST: Tambahkan port UFW baru
+	if r.Method == http.MethodPost {
+		var req FirewallRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.Port == "" || (req.Action != "allow" && req.Action != "deny") {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
+
+		if runtime.GOOS == "linux" {
+			cmd := exec.Command("sudo", "ufw", req.Action, req.Port+"/tcp")
+			err := cmd.Run()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to update firewall: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Port %s successfully set to %s", req.Port, req.Action),
+		})
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": fmt.Sprintf("Port %s successfully set to %s", req.Port, req.Action),
-	})
+	// 3. DELETE: Hapus port dari UFW
+	if r.Method == http.MethodDelete {
+		var req FirewallRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.Port == "" {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if runtime.GOOS == "linux" {
+			exec.Command("sudo", "ufw", "delete", "allow", req.Port+"/tcp").Run()
+			exec.Command("sudo", "ufw", "delete", "deny", req.Port+"/tcp").Run()
+			exec.Command("sudo", "ufw", "delete", "allow", req.Port).Run()
+			exec.Command("sudo", "ufw", "delete", "deny", req.Port).Run()
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Port %s successfully deleted from firewall!", req.Port),
+		})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
 func vhostHandler(w http.ResponseWriter, r *http.Request) {
