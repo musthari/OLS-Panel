@@ -1,0 +1,12 @@
+# MySQL/MariaDB Optimization for 2GB RAM VPS
+[mysqld]
+performance_schema = OFF
+skip-name-resolve
+innodb_buffer_pool_size = 512M
+innodb_log_file_size = 64M
+key_buffer_size = 32M
+max_connections = 100
+table_open_cache = 800
+thread_cache_size = 16
+max_heap_table_size = 32M
+tmp_table_size = 32M
