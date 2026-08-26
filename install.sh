@@ -21,8 +21,12 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Prompt for Custom SSH Port
-read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT
+# Prompt for Custom SSH Port (Explicitly read from /dev/tty if available)
+if [ -t 0 ]; then
+    read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT
+else
+    read -p "Enter desired SSH Port [Default: 22]: " SSH_PORT </dev/tty || SSH_PORT=22
+fi
 SSH_PORT=${SSH_PORT:-22}
 
 echo -e "\n${YELLOW}[1/6] Updating system packages...${NC}"
