@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -11,6 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type SystemStatus struct {
@@ -31,10 +36,48 @@ type CreateVHostRequest struct {
 	SiteType string `json:"site_type"` // "wordpress" or "generic"
 }
 
+type DeleteVHostRequest struct {
+	Domain   string `json:"domain"`
+	Username string `json:"username"`
+}
+
+type CreateDBRequest struct {
+	Domain   string `json:"domain"`
+	DBName   string `json:"db_name"`
+	DBUser   string `json:"db_user"`
+}
+
+type DeleteDBRequest struct {
+	DBName string `json:"db_name"`
+	DBUser string `json:"db_user"`
+}
+
+type DomainInfo struct {
+	Domain   string `json:"domain"`
+	Username string `json:"username"`
+	Path     string `json:"path"`
+	SiteType string `json:"site_type"`
+	DBName   string `json:"db_name"`
+	DBUser   string `json:"db_user"`
+}
+
 func enableCORS(w *http.ResponseWriter) {
 	(*w).Header().Set("Access-Control-Allow-Origin", "*")
-	(*w).Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	(*w).Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	(*w).Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+func generateRandomPassword(length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "DefaultPass123!"
+	}
+	return hex.EncodeToString(b)[:length]
+}
+
+func getMySQLDB() (*sql.DB, error) {
+	// Koneksi MySQL via socket Unix root tanpa password
+	return sql.Open("mysql", "root@unix(/run/mysqld/mysqld.sock)/")
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,103 +138,143 @@ func firewallHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// API Endpoint: Create New Linux User & OLS VirtualHost (Secured)
-func createVHostHandler(w http.ResponseWriter, r *http.Request) {
+func vhostHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
 	if r.Method == "OPTIONS" {
 		return
 	}
 
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req CreateVHostRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil || req.Domain == "" || req.Username == "" {
-		http.Error(w, "Invalid request parameters", http.StatusBadRequest)
-		return
-	}
-
-	domain := strings.ToLower(strings.TrimSpace(req.Domain))
-	username := strings.ToLower(strings.TrimSpace(req.Username))
-
-	if runtime.GOOS == "linux" {
-		// 1. Create Linux System User with NO interactive shell (/usr/sbin/nologin)
-		exec.Command("useradd", "-m", "-s", "/usr/sbin/nologin", username).Run()
-
-		// Secure Home Directory Permissions (chmod 711) so other users cannot traverse it
-		userHome := fmt.Sprintf("/home/%s", username)
-		os.Chmod(userHome, 0711)
-
-		// 2. Setup Directory Structure
-		vhRoot := fmt.Sprintf("%s/domains/%s", userHome, domain)
-		docRoot := filepath.Join(vhRoot, "html")
-		logsDir := filepath.Join(vhRoot, "logs")
-
-		os.MkdirAll(docRoot, 0755)
-		os.MkdirAll(logsDir, 0755)
-
-		// Create dummy index file
-		indexContent := fmt.Sprintf("<h1>Welcome to %s</h1><p>Powered by OLS Panel (Secured Environment)</p>", domain)
-		ioutil.WriteFile(filepath.Join(docRoot, "index.html"), []byte(indexContent), 0644)
-
-		// Set directory ownership strictly to the created system user
-		exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), fmt.Sprintf("%s/domains", userHome)).Run()
-
-		// 3. Load VHost Template Configuration
-		templatePath := "/opt/ols-panel/scripts/configs/vhost-generic.conf"
-		if req.SiteType == "wordpress" {
-			templatePath = "/opt/ols-panel/scripts/configs/vhost-wordpress.conf"
-		}
-
-		configData, err := ioutil.ReadFile(templatePath)
-		if err != nil {
-			http.Error(w, "Failed to load VHost template", http.StatusInternalServerError)
+	if r.Method == http.MethodPost {
+		// Pembuatan Domain & Linux User Baru
+		var req CreateVHostRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.Domain == "" || req.Username == "" {
+			http.Error(w, "Invalid request parameters", http.StatusBadRequest)
 			return
 		}
 
-		// Replace variables in template
-		vhConfig := strings.ReplaceAll(string(configData), "$VH_NAME", domain)
-		vhConfig = strings.ReplaceAll(vhConfig, "$VH_ROOT", vhRoot)
+		domain := strings.ToLower(strings.TrimSpace(req.Domain))
+		username := strings.ToLower(strings.TrimSpace(req.Username))
 
-		// Save VHost Config File to OpenLiteSpeed Directory
-		olsConfDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s", domain)
-		os.MkdirAll(olsConfDir, 0755)
-		olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
-		ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
+		if runtime.GOOS == "linux" {
+			exec.Command("useradd", "-m", "-s", "/usr/sbin/nologin", username).Run()
 
-		// 4. Append VHost Mapping to OLS Main Config (httpd_config.conf) if not already present
-		mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
-		vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
+			userHome := fmt.Sprintf("/home/%s", username)
+			os.Chmod(userHome, 0711)
 
-		f, err := os.OpenFile(mainConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			f.WriteString(vhostMapping)
-			f.Close()
+			vhRoot := fmt.Sprintf("%s/domains/%s", userHome, domain)
+			docRoot := filepath.Join(vhRoot, "html")
+			logsDir := filepath.Join(vhRoot, "logs")
+
+			os.MkdirAll(docRoot, 0755)
+			os.MkdirAll(logsDir, 0755)
+
+			indexContent := fmt.Sprintf("<h1>Welcome to %s</h1><p>Powered by OLS Panel (Secured Environment)</p>", domain)
+			ioutil.WriteFile(filepath.Join(docRoot, "index.html"), []byte(indexContent), 0644)
+
+			exec.Command("chown", "-R", fmt.Sprintf("%s:%s", username, username), fmt.Sprintf("%s/domains", userHome)).Run()
+
+			templatePath := "/opt/ols-panel/scripts/configs/vhost-generic.conf"
+			if req.SiteType == "wordpress" {
+				templatePath = "/opt/ols-panel/scripts/configs/vhost-wordpress.conf"
+			}
+
+			configData, err := ioutil.ReadFile(templatePath)
+			if err != nil {
+				http.Error(w, "Failed to load VHost template", http.StatusInternalServerError)
+				return
+			}
+
+			vhConfig := strings.ReplaceAll(string(configData), "$VH_NAME", domain)
+			vhConfig = strings.ReplaceAll(vhConfig, "$VH_ROOT", vhRoot)
+
+			olsConfDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s", domain)
+			os.MkdirAll(olsConfDir, 0755)
+			olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
+			ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
+
+			mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
+			vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
+
+			f, err := os.OpenFile(mainConfigPath, os.O_APPEND|os.O_WRONLY, 0644)
+			if err == nil {
+				f.WriteString(vhostMapping)
+				f.Close()
+			}
+
+			exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
 		}
 
-		// 5. Reload OpenLiteSpeed
-		exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Secured VirtualHost for %s (User: %s) successfully created!", domain, username),
+		})
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": fmt.Sprintf("Secured VirtualHost for %s (User: %s) successfully created!", domain, username),
-	})
+	if r.Method == http.MethodDelete {
+		// Hapus Domain, Konfigurasi, & Folder
+		var req DeleteVHostRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.Domain == "" {
+			http.Error(w, "Invalid request parameters", http.StatusBadRequest)
+			return
+		}
+
+		domain := strings.ToLower(strings.TrimSpace(req.Domain))
+
+		if runtime.GOOS == "linux" {
+			// 1. Hapus direktori VHost di OpenLiteSpeed
+			olsConfDir := fmt.Sprintf("/usr/local/lsws/conf/vhosts/%s", domain)
+			os.RemoveAll(olsConfDir)
+
+			// 2. Bersihkan blok virtualhost dari httpd_config.conf
+			mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
+			if content, err := ioutil.ReadFile(mainConfigPath); err == nil {
+				lines := strings.Split(string(content), "\n")
+				var newLines []string
+				inBlock := false
+
+				for _, line := range lines {
+					if strings.HasPrefix(strings.TrimSpace(line), fmt.Sprintf("virtualhost %s {", domain)) {
+						inBlock = true
+						continue
+					}
+					if inBlock && strings.TrimSpace(line) == "}" {
+						inBlock = false
+						continue
+					}
+					if !inBlock {
+						newLines = append(newLines, line)
+					}
+				}
+				ioutil.WriteFile(mainConfigPath, []byte(strings.Join(newLines, "\n")), 0644)
+			}
+
+			// 3. Hapus Linux System User dan Home Folder jika diminta
+			if req.Username != "" {
+				exec.Command("userdel", "-r", req.Username).Run()
+			}
+
+			// 4. Reload OLS
+			exec.Command("sudo", "/usr/local/lsws/bin/lswsctrl", "reload").Run()
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("VirtualHost %s successfully deleted!", domain),
+		})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
-type DomainInfo struct {
-	Domain   string `json:"domain"`
-	Path     string `json:"path"`
-	SiteType string `json:"site_type"`
-}
-
-// Endpoint GET: Membaca daftar VHost dari folder /usr/local/lsws/conf/vhosts/
 func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(&w)
-	if r.Method == "OPTIONS" { return }
+	if r.Method == "OPTIONS" {
+		return
+	}
 
 	var domains []DomainInfo
 
@@ -199,22 +282,53 @@ func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
 		vhostDir := "/usr/local/lsws/conf/vhosts"
 		files, err := ioutil.ReadDir(vhostDir)
 		if err == nil {
+			dbMap := make(map[string]map[string]string)
+
+			// Ambil metadata database terkait dari OLS-Panel DB Store
+			dbMetaPath := "/opt/ols-panel/db_meta.json"
+			if metaData, err := ioutil.ReadFile(dbMetaPath); err == nil {
+				json.Unmarshal(metaData, &dbMap)
+			}
+
 			for _, file := range files {
 				if file.IsDir() {
 					domainName := file.Name()
 					confPath := filepath.Join(vhostDir, domainName, "vhconf.conf")
-					
+
 					siteType := "generic"
+					username := "unknown"
+
 					if content, err := ioutil.ReadFile(confPath); err == nil {
-						if strings.Contains(string(content), "autoLoadHtaccess") {
+						strContent := string(content)
+						if strings.Contains(strContent, "autoLoadHtaccess") {
 							siteType = "wordpress"
 						}
+
+						// Extract username from vhRoot
+						for _, line := range strings.Split(strContent, "\n") {
+							if strings.HasPrefix(strings.TrimSpace(line), "docRoot") {
+								parts := strings.Split(line, "/")
+								if len(parts) >= 3 && parts[1] == "home" {
+									username = parts[2]
+								}
+							}
+						}
+					}
+
+					dbName := "-"
+					dbUser := "-"
+					if metaInfo, exists := dbMap[domainName]; exists {
+						dbName = metaInfo["db_name"]
+						dbUser = metaInfo["db_user"]
 					}
 
 					domains = append(domains, DomainInfo{
 						Domain:   domainName,
-						Path:     fmt.Sprintf("/home/*/domains/%s/html", domainName),
+						Username: username,
+						Path:     fmt.Sprintf("/home/%s/domains/%s/html", username, domainName),
 						SiteType: siteType,
+						DBName:   dbName,
+						DBUser:   dbUser,
 					})
 				}
 			}
@@ -225,14 +339,130 @@ func getVHostsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(domains)
 }
 
+func databaseHandler(w http.ResponseWriter, r *http.Request) {
+	enableCORS(&w)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		// Buat Database & User MySQL
+		var req CreateDBRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.Domain == "" || req.DBName == "" || req.DBUser == "" {
+			http.Error(w, "Invalid parameters", http.StatusBadRequest)
+			return
+		}
+
+		dbName := strings.TrimSpace(req.DBName)
+		dbUser := strings.TrimSpace(req.DBUser)
+		dbPass := generateRandomPassword(16)
+
+		if runtime.GOOS == "linux" {
+			db, err := getMySQLDB()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Database connection error: %v", err), http.StatusInternalServerError)
+				return
+			}
+			defer db.Close()
+
+			// 1. Create Database
+			_, err = db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", dbName))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to create DB: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+			// 2. Create User & Grant Privileges
+			db.Exec(fmt.Sprintf("CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s';", dbUser, dbPass))
+			db.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.* TO '%s'@'localhost';", dbName, dbUser))
+			db.Exec("FLUSH PRIVILEGES;")
+
+			// 3. Simpan metadata hubungan domain ke DB
+			dbMetaPath := "/opt/ols-panel/db_meta.json"
+			dbMap := make(map[string]map[string]string)
+
+			if metaData, err := ioutil.ReadFile(dbMetaPath); err == nil {
+				json.Unmarshal(metaData, &dbMap)
+			}
+
+			dbMap[req.Domain] = map[string]string{
+				"db_name": dbName,
+				"db_user": dbUser,
+			}
+
+			updatedMeta, _ := json.MarshalIndent(dbMap, "", "  ")
+			ioutil.WriteFile(dbMetaPath, updatedMeta, 0644)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message":  fmt.Sprintf("Database '%s' and User '%s' created successfully!", dbName, dbUser),
+			"db_name":  dbName,
+			"db_user":  dbUser,
+			"db_pass":  dbPass,
+		})
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		// Hapus Database & User MySQL
+		var req DeleteDBRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil || req.DBName == "" {
+			http.Error(w, "Invalid parameters", http.StatusBadRequest)
+			return
+		}
+
+		if runtime.GOOS == "linux" {
+			db, err := getMySQLDB()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Database connection error: %v", err), http.StatusInternalServerError)
+				return
+			}
+			defer db.Close()
+
+			db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", req.DBName))
+			if req.DBUser != "" {
+				db.Exec(fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost';", req.DBUser))
+			}
+			db.Exec("FLUSH PRIVILEGES;")
+
+			// Bersihkan metadata
+			dbMetaPath := "/opt/ols-panel/db_meta.json"
+			dbMap := make(map[string]map[string]string)
+
+			if metaData, err := ioutil.ReadFile(dbMetaPath); err == nil {
+				json.Unmarshal(metaData, &dbMap)
+				for domain, meta := range dbMap {
+					if meta["db_name"] == req.DBName {
+						delete(dbMap, domain)
+					}
+				}
+				updatedMeta, _ := json.MarshalIndent(dbMap, "", "  ")
+				ioutil.WriteFile(dbMetaPath, updatedMeta, 0644)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Database '%s' successfully deleted!", req.DBName),
+		})
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
 func main() {
 	fs := http.FileServer(http.Dir("../frontend"))
 	http.Handle("/", fs)
 
 	http.HandleFunc("/api/status", statusHandler)
 	http.HandleFunc("/api/firewall", firewallHandler)
-	http.HandleFunc("/api/vhost", createVHostHandler)
-	http.HandleFunc("/api/vhosts", getVHostsHandler) // Endpoint baru untuk List Domain
+	http.HandleFunc("/api/vhost", vhostHandler)
+	http.HandleFunc("/api/vhosts", getVHostsHandler)
+	http.HandleFunc("/api/database", databaseHandler)
 
 	port := ":8080"
 	fmt.Printf("[OLS-Panel Backend] Server started on http://localhost%s\n", port)

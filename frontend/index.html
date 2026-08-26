@@ -22,7 +22,7 @@
             padding: 20px;
         }
 
-        .container { max-width: 900px; margin: 0 auto; }
+        .container { max-width: 950px; margin: 0 auto; }
 
         header {
             display: flex;
@@ -88,7 +88,17 @@
         }
 
         button:hover { opacity: 0.9; }
+
+        .btn-danger {
+            background-color: var(--danger-color);
+            color: #fff;
+            padding: 6px 12px;
+            font-size: 0.8rem;
+        }
+
         .toast { margin-top: 10px; font-size: 0.9rem; }
+        .db-info { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
+        .db-pass-alert { background: #0f172a; padding: 10px; border-radius: 6px; border: 1px solid var(--success-color); margin-top: 10px; font-size: 0.85rem; color: var(--success-color); }
     </style>
 </head>
 <body>
@@ -134,25 +144,42 @@
         </div>
         <div id="vhost-toast" class="toast"></div>
     </div>
-    
+
+    <!-- Create MySQL Database Section -->
+    <div class="card">
+        <h2>Create MySQL Database</h2>
+        <p style="color: #94a3b8; font-size: 0.9rem;">Assign a database and user to a managed website.</p>
+        
+        <div class="form-group">
+            <select id="db-domain-select" style="flex: 1.5; min-width: 180px;">
+                <option value="">Select Domain...</option>
+            </select>
+            <input type="text" id="dbname-input" placeholder="db_name" style="flex: 1; min-width: 120px;">
+            <input type="text" id="dbuser-input" placeholder="db_user" style="flex: 1; min-width: 120px;">
+            <button onclick="createDatabase()">Create Database</button>
+        </div>
+        <div id="db-toast" class="toast"></div>
+        <div id="db-alert" class="db-pass-alert" style="display: none;"></div>
+    </div>
+
     <!-- Managed Websites List -->
-<div class="card">
-    <h2>Managed Websites</h2>
-    <table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px;">
-        <thead>
-            <tr style="border-bottom: 1px solid #334155; color: #94a3b8;">
-                <th style="padding: 10px;">Domain</th>
-                <th style="padding: 10px;">Type</th>
-                <th style="padding: 10px;">Status</th>
-            </tr>
-        </thead>
-        <tbody id="domain-list">
-            <tr>
-                <td colspan="3" style="padding: 10px; color: #94a3b8;">Loading domains...</td>
-            </tr>
-        </tbody>
-    </table>
-</div>
+    <div class="card">
+        <h2>Managed Websites</h2>
+        <table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px;">
+            <thead>
+                <tr style="border-bottom: 1px solid #334155; color: #94a3b8;">
+                    <th style="padding: 10px;">Domain & MySQL Info</th>
+                    <th style="padding: 10px;">Type</th>
+                    <th style="padding: 10px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="domain-list">
+                <tr>
+                    <td colspan="3" style="padding: 10px; color: #94a3b8;">Loading domains...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
 
     <!-- Firewall Manager Section -->
     <div class="card">
@@ -192,6 +219,52 @@
         }
     }
 
+    async function fetchDomains() {
+        try {
+            const res = await fetch(`${API_URL}/vhosts`);
+            const domains = await res.json();
+            const listElem = document.getElementById('domain-list');
+            const selectElem = document.getElementById('db-domain-select');
+
+            selectElem.innerHTML = '<option value="">Select Domain...</option>';
+
+            if (!domains || domains.length === 0) {
+                listElem.innerHTML = '<tr><td colspan="3" style="padding: 10px; color: #94a3b8;">No websites configured yet.</td></tr>';
+                return;
+            }
+
+            listElem.innerHTML = domains.map(d => {
+                selectElem.innerHTML += `<option value="${d.domain}">${d.domain}</option>`;
+                
+                const hasDB = d.db_name && d.db_name !== '-';
+                const dbText = hasDB 
+                    ? `<div class="db-info">📦 DB: <b>${d.db_name}</b> | 👤 User: <b>${d.db_user}</b></div>` 
+                    : `<div class="db-info">📦 DB: <i>No database attached</i></div>`;
+
+                const dbDeleteBtn = hasDB 
+                    ? `<button class="btn-danger" style="margin-left: 5px; background: #ea580c;" onclick="deleteDatabase('${d.db_name}', '${d.db_user}')">Delete DB</button>` 
+                    : '';
+
+                return `
+                    <tr style="border-bottom: 1px solid #1e293b;">
+                        <td style="padding: 10px;">
+                            <div style="font-weight: bold; color: #38bdf8; font-size: 1.05rem;">${d.domain}</div>
+                            <div style="font-size: 0.8rem; color: #64748b;">User: ${d.username}</div>
+                            ${dbText}
+                        </td>
+                        <td style="padding: 10px;"><span style="background: #334155; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">${d.site_type.toUpperCase()}</span></td>
+                        <td style="padding: 10px;">
+                            <button class="btn-danger" onclick="deleteVHost('${d.domain}', '${d.username}')">Delete Domain</button>
+                            ${dbDeleteBtn}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (err) {
+            console.error('Failed to fetch domains:', err);
+        }
+    }
+
     async function createVHost() {
         const domain = document.getElementById('domain-input').value;
         const username = document.getElementById('user-input').value;
@@ -218,6 +291,7 @@
             if (res.ok) {
                 toast.innerText = result.message;
                 toast.style.color = '#22c55e';
+                fetchDomains();
             } else {
                 toast.innerText = result.error || 'Failed to create VirtualHost';
                 toast.style.color = '#ef4444';
@@ -225,6 +299,92 @@
         } catch (err) {
             toast.innerText = 'Error connecting to backend API';
             toast.style.color = '#ef4444';
+        }
+    }
+
+    async function deleteVHost(domain, username) {
+        if (!confirm(`Are you sure you want to delete domain '${domain}' and user '${username}'?`)) return;
+
+        try {
+            const res = await fetch(`${API_URL}/vhost`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, username })
+            });
+
+            if (res.ok) {
+                fetchDomains();
+            } else {
+                alert('Failed to delete VirtualHost');
+            }
+        } catch (err) {
+            alert('Error connecting to backend API');
+        }
+    }
+
+    async function createDatabase() {
+        const domain = document.getElementById('db-domain-select').value;
+        const db_name = document.getElementById('dbname-input').value;
+        const db_user = document.getElementById('dbuser-input').value;
+        const toast = document.getElementById('db-toast');
+        const alertBox = document.getElementById('db-alert');
+
+        if (!domain || !db_name || !db_user) {
+            toast.innerText = 'Please select domain and fill DB details.';
+            toast.style.color = '#ef4444';
+            return;
+        }
+
+        toast.innerText = 'Creating database...';
+        toast.style.color = '#38bdf8';
+
+        try {
+            const res = await fetch(`${API_URL}/database`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, db_name, db_user })
+            });
+
+            const result = await res.json();
+            if (res.ok) {
+                toast.innerText = result.message;
+                toast.style.color = '#22c55e';
+
+                alertBox.style.display = 'block';
+                alertBox.innerHTML = `
+                    <b>🔑 MySQL Credentials Created:</b><br>
+                    DB Name: <b>${result.db_name}</b> | DB User: <b>${result.db_user}</b><br>
+                    Password: <u style="letter-spacing: 1px;">${result.db_pass}</u> <i>(Save this password!)</i>
+                `;
+
+                fetchDomains();
+            } else {
+                toast.innerText = result.error || 'Failed to create database';
+                toast.style.color = '#ef4444';
+            }
+        } catch (err) {
+            toast.innerText = 'Error connecting to backend API';
+            toast.style.color = '#ef4444';
+        }
+    }
+
+    async function deleteDatabase(db_name, db_user) {
+        if (!confirm(`Are you sure you want to delete database '${db_name}' and user '${db_user}'?`)) return;
+
+        try {
+            const res = await fetch(`${API_URL}/database`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ db_name, db_user })
+            });
+
+            if (res.ok) {
+                fetchDomains();
+            } else {
+                alert('Failed to delete database');
+            }
+        } catch (err) {
+            alert('Error connecting to backend API');
         }
     }
 
@@ -264,35 +424,8 @@
     }
 
     fetchStatus();
+    fetchDomains();
     setInterval(fetchStatus, 10000);
-    
-    async function fetchDomains() {
-    try {
-        const res = await fetch(`${API_URL}/vhosts`);
-        const domains = await res.json();
-        const listElem = document.getElementById('domain-list');
-
-        if (!domains || domains.length === 0) {
-            listElem.innerHTML = '<tr><td colspan="3" style="padding: 10px; color: #94a3b8;">No websites configured yet.</td></tr>';
-            return;
-        }
-
-        listElem.innerHTML = domains.map(d => `
-            <tr style="border-bottom: 1px solid #1e293b;">
-                <td style="padding: 10px; font-weight: bold; color: #38bdf8;">${d.domain}</td>
-                <td style="padding: 10px;"><span style="background: #334155; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">${d.site_type.toUpperCase()}</span></td>
-                <td style="padding: 10px; color: #22c55e;">Active</td>
-            </tr>
-        `).join('');
-    } catch (err) {
-        console.error('Failed to fetch domains:', err);
-    }
-}
-
-// Panggil saat halaman dimuat
-fetchDomains();
-
-
 </script>
 
 </body>
