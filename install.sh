@@ -31,7 +31,7 @@ apt-get install -y curl wget git build-essential golang-go mariadb-server ufw
 
 echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
-    wget -O - https://repo.litespeedtech.com/res/install.sh | bash
+    wget --no-check-certificate -O - https://repo.litespeedtech.com/res/install.sh | bash
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
