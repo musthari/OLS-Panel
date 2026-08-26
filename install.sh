@@ -34,7 +34,7 @@ echo -e "\n${YELLOW}[1/6] Updating system packages...${NC}"
 apt-get update -y && apt-get upgrade -y
 apt-get install -y curl wget git build-essential golang-go mariadb-server ufw lsb-release gnupg2 ca-certificates net-tools
 
-echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
+echo -e "\n${YELLOW}[2/6] Installing & Configuring OpenLiteSpeed Listeners...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
     OS_CODENAME=$(lsb_release -sc)
     wget -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg || \
@@ -44,6 +44,31 @@ if [ ! -d "/usr/local/lsws" ]; then
     apt-get update -y
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
+
+# Konfigurasi Listener Default Port 80 & Port 443 di OpenLiteSpeed
+OLS_CONF="/usr/local/lsws/conf/httpd_config.conf"
+if [ -f "$OLS_CONF" ]; then
+    if ! grep -q "listener HTTP " "$OLS_CONF"; then
+        cat << 'EOF' >> "$OLS_CONF"
+
+listener HTTP {
+  address                 *:80
+  secure                  0
+  map                     * *
+}
+
+listener HTTPS {
+  address                 *:443
+  secure                  1
+  keyFile                 /usr/local/lsws/admin/conf/webadmin.key
+  certFile                /usr/local/lsws/admin/conf/webadmin.crt
+  map                     * *
+}
+EOF
+    fi
+fi
+
+/usr/local/lsws/bin/lswsctrl restart
 
 echo -e "\n${YELLOW}[3/6] Applying RAM-based MySQL Optimizations...${NC}"
 TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
