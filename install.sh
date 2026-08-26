@@ -92,9 +92,8 @@ cp -r "$SCRIPT_DIR/backend" "$SCRIPT_DIR/frontend" "$SCRIPT_DIR/scripts" /opt/ol
 
 cd /opt/ols-panel/backend
 
-# Fix Missing go.sum entry & Download Dependencies
+# Merapikan dan memverifikasi modul secara aman
 echo "[Go] Resolving module dependencies..."
-go mod download
 go mod tidy
 
 # Compile Backend Binary
