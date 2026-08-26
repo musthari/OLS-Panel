@@ -40,7 +40,7 @@ type FirewallRule struct {
 type CreateVHostRequest struct {
 	Domain   string `json:"domain"`
 	Username string `json:"username"`
-	SiteType string `json:"site_type"` // "wordpress" or "generic"
+	SiteType string `json:"site_type"`
 }
 
 type DeleteVHostRequest struct {
@@ -280,7 +280,7 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 			olsConfPath := filepath.Join(olsConfDir, "vhconf.conf")
 			ioutil.WriteFile(olsConfPath, []byte(vhConfig), 0644)
 
-			// Append VHost Block & Listener Mapping to httpd_config.conf
+			// Update httpd_config.conf safely
 			mainConfigPath := "/usr/local/lsws/conf/httpd_config.conf"
 			vhostMapping := fmt.Sprintf("\nvirtualhost %s {\n  vhRoot %s\n  configFile %s\n  allowSymbolLink 1\n  enableScript 1\n  restrained 1\n}\n", domain, vhRoot, olsConfPath)
 
@@ -291,14 +291,35 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 					strContent += vhostMapping
 				}
 
-				// Map VirtualHost to Listener HTTP & HTTPS
-				mapRule := fmt.Sprintf("  map                     %s %s, www.%s\n", domain, domain, domain)
+				// Inject exact map directive into listeners
+				mapLine := fmt.Sprintf("  map                     %s %s, www.%s", domain, domain, domain)
 
-				if strings.Contains(strContent, "listener HTTP {") && !strings.Contains(strContent, fmt.Sprintf("map                     %s", domain)) {
-					strContent = strings.Replace(strContent, "listener HTTP {", "listener HTTP {\n"+mapRule, 1)
-				}
-				if strings.Contains(strContent, "listener HTTPS {") {
-					strContent = strings.Replace(strContent, "listener HTTPS {", "listener HTTPS {\n"+mapRule, 1)
+				if !strings.Contains(strContent, fmt.Sprintf("map                     %s %s", domain, domain)) {
+					lines := strings.Split(strContent, "\n")
+					var updatedLines []string
+					inHTTP := false
+					inHTTPS := false
+
+					for _, line := range lines {
+						trimmed := strings.TrimSpace(line)
+						if strings.HasPrefix(trimmed, "listener HTTP {") {
+							inHTTP = true
+						} else if strings.HasPrefix(trimmed, "listener HTTPS {") {
+							inHTTPS = true
+						}
+
+						updatedLines = append(updatedLines, line)
+
+						if inHTTP && strings.HasPrefix(trimmed, "address") {
+							updatedLines = append(updatedLines, mapLine)
+							inHTTP = false
+						}
+						if inHTTPS && strings.HasPrefix(trimmed, "address") {
+							updatedLines = append(updatedLines, mapLine)
+							inHTTPS = false
+						}
+					}
+					strContent = strings.Join(updatedLines, "\n")
 				}
 
 				ioutil.WriteFile(mainConfigPath, []byte(strContent), 0644)
@@ -335,8 +356,8 @@ func vhostHandler(w http.ResponseWriter, r *http.Request) {
 				inBlock := false
 
 				for _, line := range lines {
-					if strings.Contains(line, fmt.Sprintf("map                     %s", domain)) {
-						continue // Skip listener mapping line
+					if strings.Contains(line, fmt.Sprintf("map                     %s %s", domain, domain)) {
+						continue
 					}
 					if strings.HasPrefix(strings.TrimSpace(line), fmt.Sprintf("virtualhost %s {", domain)) {
 						inBlock = true

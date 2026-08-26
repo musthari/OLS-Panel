@@ -45,10 +45,9 @@ if [ ! -d "/usr/local/lsws" ]; then
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
-# Configure IPv4-Only Listeners (0.0.0.0) in OpenLiteSpeed
+# Clean default listeners and recreate clean IPv4-only listeners without wildcard mapping
 OLS_CONF="/usr/local/lsws/conf/httpd_config.conf"
 if [ -f "$OLS_CONF" ]; then
-    # Clean old listeners if present
     sed -i '/listener HTTP {/,/}/d' "$OLS_CONF"
     sed -i '/listener HTTPS {/,/}/d' "$OLS_CONF"
 
@@ -57,7 +56,6 @@ if [ -f "$OLS_CONF" ]; then
 listener HTTP {
   address                 0.0.0.0:80
   secure                  0
-  map                     * *
 }
 
 listener HTTPS {
@@ -65,7 +63,6 @@ listener HTTPS {
   secure                  1
   keyFile                 /usr/local/lsws/admin/conf/webadmin.key
   certFile                /usr/local/lsws/admin/conf/webadmin.crt
-  map                     * *
 }
 EOF
 fi
