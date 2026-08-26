@@ -35,13 +35,20 @@ apt-get install -y curl wget git build-essential golang-go mariadb-server ufw
 
 echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
-    # Install pendukung repository & kunci GPG
+    # Install pendukung kunci GPG & LSB tools
     apt-get install -y lsb-release gnupg2 ca-certificates wget
-    
-    # Download dan jalankan script repository resmi OLS
-    wget -O - http://rpms.litespeedtech.com/debian/enable_lst_debian_repo.sh | bash
-    
-    # Update daftar paket apt setelah repository ditambahkan
+
+    # Dapatkan codename OS secara dinamis (misal: trixie atau bookworm)
+    OS_CODENAME=$(lsb_release -sc)
+
+    # Import kunci GPG OpenLiteSpeed
+    wget -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg || \
+    wget --no-check-certificate -O /etc/apt/trusted.gpg.d/lst_repo.gpg http://rpms.litespeedtech.com/debian/lst_repo.gpg
+
+    # Tambahkan repository sesuai codename OS aktif
+    echo "deb http://rpms.litespeedtech.com/debian/ ${OS_CODENAME} main" > /etc/apt/sources.list.d/openlitespeed.list
+
+    # Update daftar paket apt
     apt-get update -y
     
     # Install OpenLiteSpeed dan LSPHP 8.2
