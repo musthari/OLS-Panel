@@ -88,9 +88,17 @@ chmod +x "$SCRIPT_DIR/scripts/firewall-setup.sh"
 
 echo -e "\n${YELLOW}[5/6] Building Backend & Setting Up Systemd...${NC}"
 mkdir -p /opt/ols-panel
-cp -r "$SCRIPT_DIR/backend" "$SCRIPT_DIR/frontend" /opt/ols-panel/
+cp -r "$SCRIPT_DIR/backend" "$SCRIPT_DIR/frontend" "$SCRIPT_DIR/scripts" /opt/ols-panel/
 
 cd /opt/ols-panel/backend
+
+# Fix Missing go.sum entry & Download Dependencies
+echo "[Go] Resolving module dependencies..."
+go mod download
+go mod tidy
+
+# Compile Backend Binary
+echo "[Go] Compiling backend binary..."
 go build -o /opt/ols-panel/panel-backend main.go
 
 # Create Systemd Service
