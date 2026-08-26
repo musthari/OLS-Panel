@@ -35,9 +35,16 @@ apt-get install -y curl wget git build-essential golang-go mariadb-server ufw
 
 echo -e "\n${YELLOW}[2/6] Installing OpenLiteSpeed...${NC}"
 if [ ! -d "/usr/local/lsws" ]; then
-    # Menggunakan mirror script resmi OpenLiteSpeed
+    # Install pendukung repository & kunci GPG
+    apt-get install -y lsb-release gnupg2 ca-certificates wget
+    
+    # Download dan jalankan script repository resmi OLS
     wget -O - http://rpms.litespeedtech.com/debian/enable_lst_debian_repo.sh | bash
+    
+    # Update daftar paket apt setelah repository ditambahkan
     apt-get update -y
+    
+    # Install OpenLiteSpeed dan LSPHP 8.2
     apt-get install -y openlitespeed lsphp82 lsphp82-mysql lsphp82-common lsphp82-curl lsphp82-opcache
 fi
 
